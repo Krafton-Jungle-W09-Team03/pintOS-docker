@@ -91,7 +91,7 @@ struct thread {
 	enum thread_status status;          /* Thread state. */
 	char name[16];                      /* Name (for debugging purposes). */
 	int priority;                       /* Priority. */
-
+	int64_t getuptick;
 	/* Shared between thread.c and synch.c. */
 	struct list_elem elem;              /* List element. */
 
@@ -116,7 +116,7 @@ extern bool thread_mlfqs;
 
 void thread_init (void);
 void thread_start (void);
-
+int64_t tick;
 void thread_tick (void);
 void thread_print_stats (void);
 
@@ -132,8 +132,11 @@ const char *thread_name (void);
 
 void thread_exit (void) NO_RETURN;
 void thread_yield (void);
-
-int thread_get_priority (void);
+// 정의한 함수 선언
+void thread_sleep(int64_t getuptick);
+void wakeup(int64_t ticks);
+// end
+int thread_get_priority(void);
 void thread_set_priority (int);
 
 int thread_get_nice (void);

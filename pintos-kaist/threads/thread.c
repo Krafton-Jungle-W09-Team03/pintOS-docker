@@ -28,6 +28,7 @@
    that are ready to run but not actually running. */
 static struct list ready_list;
 
+static struct list sleep_list;
 /* Idle thread. */
 static struct thread *idle_thread;
 
@@ -109,6 +110,8 @@ thread_init (void) {
 	lock_init (&tid_lock);
 	list_init (&ready_list);
 	list_init (&destruction_req);
+	list_init (&sleep_list);
+	tick = -1; // global tick init - ch
 
 	/* Set up a thread structure for the running thread. */
 	initial_thread = running_thread ();
@@ -308,6 +311,41 @@ thread_yield (void) {
 	intr_set_level (old_level);
 }
 
+void thread_sleep(int64_t getuptick)
+{
+	struct thread *curr = thread_current();
+	enum intr_level old_level;
+
+	ASSERT(!intr_context());
+
+	old_level = intr_disable();
+	if (curr != idle_thread){
+		curr->getuptick = getuptick;
+		list_push_back(&sleep_list, &curr->elem);
+		if(tick == -1){
+			tick = curr->getuptick;
+		}
+	}
+	do_schedule(THREAD_BLOCKED);
+	intr_set_level(old_level);
+}
+
+void wakeup(int64_t ticks)
+{
+	if (list_empty(&sleep_list))
+	{
+		return;
+	}
+
+	if (tick <= ticks)
+	{
+		struct thread *curr = list_entry(list_pop_front(&sleep_list), struct thread, elem);
+		curr->status = THREAD_READY;
+		list_push_back(&ready_list, &curr->elem);
+		tick = list_entry(list_head(&sleep_list), struct thread, elem)->getuptick;
+	}
+}
+
 /* Sets the current thread's priority to NEW_PRIORITY. */
 void
 thread_set_priority (int new_priority) {
@@ -408,6 +446,7 @@ init_thread (struct thread *t, const char *name, int priority) {
 	strlcpy (t->name, name, sizeof t->name);
 	t->tf.rsp = (uint64_t) t + PGSIZE - sizeof (void *);
 	t->priority = priority;
+	t->getuptick = 0;
 	t->magic = THREAD_MAGIC;
 }
 
