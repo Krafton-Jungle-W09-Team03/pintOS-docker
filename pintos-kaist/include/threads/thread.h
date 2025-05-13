@@ -116,7 +116,7 @@ extern bool thread_mlfqs;
 
 void thread_init (void);
 void thread_start (void);
-int64_t tick;
+int64_t global_tick;
 void thread_tick (void);
 void thread_print_stats (void);
 
@@ -132,9 +132,11 @@ const char *thread_name (void);
 
 void thread_exit (void) NO_RETURN;
 void thread_yield (void);
-// 정의한 함수 선언
+// 정의한 함수 선언 - ch
+bool getuptick_less(const struct list_elem *a_, const struct list_elem *b_, void *aux UNUSED);
+bool priority_less(const struct list_elem *a_, const struct list_elem *b_, void *aux UNUSED);
 void thread_sleep(int64_t getuptick);
-void wakeup(int64_t ticks);
+void wakeup(void);
 // end
 int thread_get_priority(void);
 void thread_set_priority (int);

@@ -127,10 +127,9 @@ timer_interrupt (struct intr_frame *args UNUSED) {
 	ticks++;
 
 	thread_tick ();
-	if(tick == -1){
-		return;
+	if(global_tick <= ticks){
+		wakeup();
 	}
-	wakeup(timer_ticks());
 	
 }
 
