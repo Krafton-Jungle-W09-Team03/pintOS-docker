@@ -216,9 +216,12 @@ thread_create (const char *name, int priority,
 
 	/* Add to run queue. */
 	thread_unblock (t);
-/* compare the priorities of the currently running
-thread and the newly inserted one. Yield the CPU if the
-newly arriving thread has higher priority*/
+	/* compare the priorities of the currently running
+	thread and the newly inserted one. Yield the CPU if the
+	newly arriving thread has higher priority*/
+	if(thread_current()->priority < priority){
+		thread_yield();
+	}
 	return tid;
 }
 
@@ -254,7 +257,7 @@ thread_unblock (struct thread *t) {
 
 	old_level = intr_disable ();
 	ASSERT (t->status == THREAD_BLOCKED);
-	list_insert_ordered(&ready_list, &t->elem, priority_less, NULL);
+	list_insert_ordered(&ready_list, &t->elem, priority_more, NULL);
 	t->status = THREAD_READY;
 	intr_set_level (old_level);
 }
@@ -321,7 +324,7 @@ thread_yield (void) {
 
 	old_level = intr_disable ();
 	if (curr != idle_thread)
-		list_insert_ordered(&ready_list, &curr->elem, priority_less, NULL);
+		list_insert_ordered(&ready_list, &curr->elem, priority_more, NULL);
 	do_schedule (THREAD_READY);
 	intr_set_level (old_level);
 }
@@ -399,7 +402,7 @@ bool getuptick_less(const struct list_elem *a_, const struct list_elem *b_,
 }
 
 
-bool priority_less(const struct list_elem *a_, const struct list_elem *b_,
+bool priority_more(const struct list_elem *a_, const struct list_elem *b_,
 					void *aux UNUSED)
 {
 	const struct thread *a = list_entry(a_, struct thread, elem);
@@ -411,7 +414,14 @@ bool priority_less(const struct list_elem *a_, const struct list_elem *b_,
 /* Sets the current thread's priority to NEW_PRIORITY. */
 void
 thread_set_priority (int new_priority) {
-	thread_current ()->priority = new_priority;
+	struct thread *curr = thread_current();
+	curr->priority = new_priority;
+	if(!list_empty(&ready_list)){
+		struct thread *head = list_entry(list_begin(&ready_list), struct thread, elem);
+		if(curr->priority < head->priority){
+			thread_yield();
+		}
+	}
 }
 
 /* Returns the current thread's priority. */
