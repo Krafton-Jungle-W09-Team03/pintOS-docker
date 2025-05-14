@@ -385,6 +385,18 @@ thread_set_priority (int new_priority) {
 	
 	struct thread *curr_thread = thread_current ();
  	curr_thread->priority = new_priority;
+	curr_thread->original_priority = new_priority;
+
+	if(!list_empty(&curr_thread->donations))
+	{
+		struct thread *donations_thread = list_entry(list_begin(&curr_thread->donations), struct thread, d_elem);
+		if(new_priority < donations_thread->priority)
+		{
+			curr_thread->priority = donations_thread->priority;
+		}
+
+	}
+
 	if(!list_empty(&ready_list))
 	{
 		struct thread *first_thread = list_entry(list_begin(&ready_list), struct thread, elem);
@@ -490,8 +502,11 @@ init_thread (struct thread *t, const char *name, int priority) {
 	strlcpy (t->name, name, sizeof t->name); //t->name에 name을 복사한다.
 	t->tf.rsp = (uint64_t) t + PGSIZE - sizeof (void *); //??? 뭐를 하려고 하는가..
 	t->priority = priority;	// 인자로 받은 priority를 t의 priority에 대입한다.
+	t->original_priority = priority; //++
 	t->magic = THREAD_MAGIC;// t의 magic을 THREAD_MAGIC을 대입
 	t->getuptick = 0;
+
+	list_init(&t->donations);	//donations 리스트 초기화
 }
 
 /* 다음에 스케줄될 스레드를 선택하여 반환한다.

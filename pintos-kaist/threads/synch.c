@@ -33,6 +33,7 @@
 #include "threads/thread.h"
 
 bool waiters_list_sort(const struct list_elem *a, const struct list_elem *b, void *aux UNUSED);
+bool sort_donations_list(const struct list_elem *a, const struct list_elem *b, void *aux UNUSED);
 
 
 /* SEMA를 VALUE로 초기화한다.
@@ -193,6 +194,8 @@ lock_acquire (struct lock *lock) {
 		if(lock->holder->priority < thread_current()->priority)
 		{
 			lock->holder->priority = thread_current()->priority;
+			//holder의 donations 리스트에 정렬해서 현재 스레드의 d_elem을 삽입한다.
+			list_insert_ordered(&lock->holder->donations, &thread_current()->d_elem, sort_donations_list, NULL);
 		}
 	}
 	sema_down (&lock->semaphore);
@@ -228,8 +231,8 @@ lock_release (struct lock *lock) {
 	if(lock->holder->priority != lock->holder->original_priority)
 	{
 		lock->holder->priority = lock->holder->original_priority;
+		list_begin (&lock->holder->donations) == list_end (&lock->holder->donations);
 	}
-
 	lock->holder = NULL;
 	sema_up (&lock->semaphore);
 }
@@ -285,8 +288,8 @@ cond_wait (struct condition *cond, struct lock *lock) {
 
 	sema_init (&waiter.semaphore, 0);			//값을 0으로 세마포어를 하나 초기화한다.
 	list_insert_ordered(&cond->waiters, &waiter.elem, waiters_list_sort, NULL);
-	// list_push_back (&cond->waiters, &waiter.elem); //현재 cond->waiters 에 waiter
-	lock_release (lock);						   
+
+	lock_release (lock);			   
 	sema_down (&waiter.semaphore);
 	lock_acquire (lock);
 }
@@ -338,4 +341,12 @@ bool waiters_list_sort(const struct list_elem *a, const struct list_elem *b, voi
 	struct thread *b_waiter_begin = list_entry(list_begin(b_waiter), struct thread, elem);
 
 	return a_waiter_begin->priority > b_waiter_begin->priority;
+}
+
+bool sort_donations_list(const struct list_elem *a, const struct list_elem *b, void *aux UNUSED)
+{
+	struct thread *a_thread = list_entry(a, struct thread, d_elem);
+	struct thread *b_thread = list_entry(b, struct thread, d_elem);
+
+	return a_thread->priority > b_thread->priority;
 }
