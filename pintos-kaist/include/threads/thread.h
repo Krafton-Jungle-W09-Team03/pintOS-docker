@@ -85,13 +85,13 @@ typedef int tid_t;
  * only because they are mutually exclusive: only a thread in the
  * ready state is on the run queue, whereas only a thread in the
  * blocked state is on a semaphore wait list. */
-struct thread {
+struct thread {							//thread 구조체
 	/* Owned by thread.c. */
 	tid_t tid;                          /* Thread identifier. */
 	enum thread_status status;          /* Thread state. */
 	char name[16];                      /* Name (for debugging purposes). */
 	int priority;                       /* Priority. */
-	int64_t getuptick;
+	int64_t getuptick;					// 일어날 시간
 	/* Shared between thread.c and synch.c. */
 	struct list_elem elem;              /* List element. */
 
@@ -109,14 +109,16 @@ struct thread {
 	unsigned magic;                     /* Detects stack overflow. */
 };
 
+
 /* If false (default), use round-robin scheduler.
    If true, use multi-level feedback queue scheduler.
    Controlled by kernel command-line option "-o mlfqs". */
 extern bool thread_mlfqs;
+int64_t global_tick;
 
 void thread_init (void);
 void thread_start (void);
-int64_t global_tick;
+
 void thread_tick (void);
 void thread_print_stats (void);
 
@@ -132,13 +134,9 @@ const char *thread_name (void);
 
 void thread_exit (void) NO_RETURN;
 void thread_yield (void);
-// 정의한 함수 선언 - ch
-bool getuptick_less(const struct list_elem *a_, const struct list_elem *b_, void *aux UNUSED);
-bool priority_less(const struct list_elem *a_, const struct list_elem *b_, void *aux UNUSED);
-void thread_sleep(int64_t getuptick);
-void wakeup(void);
-// end
-int thread_get_priority(void);
+void timer_sleep (int64_t ticks);
+
+int thread_get_priority (void);
 void thread_set_priority (int);
 
 int thread_get_nice (void);
@@ -147,5 +145,8 @@ int thread_get_recent_cpu (void);
 int thread_get_load_avg (void);
 
 void do_iret (struct intr_frame *tf);
+
+bool sort_list(const struct list_elem *a, const struct list_elem *b, void *aux UNUSED); //++추가
+
 
 #endif /* threads/thread.h */
