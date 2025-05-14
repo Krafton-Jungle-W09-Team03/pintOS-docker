@@ -249,6 +249,17 @@ struct semaphore_elem {
 	struct semaphore semaphore;         /* This semaphore. */
 };
 
+bool waiters_priority_more(const struct list_elem *a_, const struct list_elem *b_, void *aux UNUSED)
+{
+	struct semaphore *sema_a = &list_entry(a_, struct semaphore_elem, elem)->semaphore;
+	struct semaphore *sema_b = &list_entry(b_, struct semaphore_elem, elem)->semaphore;
+
+	struct thread *a = list_entry(list_begin(&(sema_a)->waiters), struct thread, elem);
+	struct thread *b = list_entry(list_begin(&(sema_b)->waiters), struct thread, elem);
+
+	return a->priority > b->priority;
+}
+
 /* Initializes condition variable COND.  A condition variable
    allows one piece of code to signal a condition and cooperating
    code to receive the signal and act upon it. */
@@ -289,7 +300,7 @@ cond_wait (struct condition *cond, struct lock *lock) {
 	ASSERT (lock_held_by_current_thread (lock));
 
 	sema_init (&waiter.semaphore, 0);
-	list_push_back (&cond->waiters, &waiter.elem);
+	list_insert_ordered(&cond->waiters, &waiter.elem, waiters_priority_more, NULL);
 	lock_release (lock);
 	sema_down (&waiter.semaphore);
 	lock_acquire (lock);
@@ -309,9 +320,10 @@ cond_signal (struct condition *cond, struct lock *lock UNUSED) {
 	ASSERT (!intr_context ());
 	ASSERT (lock_held_by_current_thread (lock));
 
-	if (!list_empty (&cond->waiters))
-		sema_up (&list_entry (list_pop_front (&cond->waiters),
-					struct semaphore_elem, elem)->semaphore);
+	if (!list_empty (&cond->waiters)){
+		list_sort(&cond->waiters, waiters_priority_more, NULL);
+		sema_up(&list_entry(list_pop_front(&cond->waiters), struct semaphore_elem, elem)->semaphore);
+	}
 }
 
 /* Wakes up all threads, if any, waiting on COND (protected by
