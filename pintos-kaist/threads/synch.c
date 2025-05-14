@@ -190,10 +190,9 @@ lock_acquire (struct lock *lock) {
 	
 	if(lock->holder != NULL)
 	{
-		if(thread_current()->priority < lock->holder->priority)
+		if(lock->holder->priority < thread_current()->priority)
 		{
-			lock->holder->priority = thread_current()->priority;//우선 순위를 상속한다.	
-			//어디에 자신의 우선순위를 기록해야 할듯...
+			lock->holder->priority = thread_current()->priority;
 		}
 	}
 	sema_down (&lock->semaphore);
@@ -225,6 +224,11 @@ void
 lock_release (struct lock *lock) {
 	ASSERT (lock != NULL);
 	ASSERT (lock_held_by_current_thread (lock));
+
+	if(lock->holder->priority != lock->holder->original_priority)
+	{
+		lock->holder->priority = lock->holder->original_priority;
+	}
 
 	lock->holder = NULL;
 	sema_up (&lock->semaphore);
