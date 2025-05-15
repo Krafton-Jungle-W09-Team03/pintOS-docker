@@ -398,8 +398,8 @@ bool getuptick_less(const struct list_elem *a_, const struct list_elem *b_,
 	return a->getuptick < b->getuptick;
 }
 
-
-bool priority_less(const struct list_elem *a_, const struct list_elem *b_,
+// priority compare helper function
+bool priority_more(const struct list_elem *a_, const struct list_elem *b_,
 					void *aux UNUSED)
 {
 	const struct thread *a = list_entry(a_, struct thread, elem);
@@ -411,7 +411,13 @@ bool priority_less(const struct list_elem *a_, const struct list_elem *b_,
 /* Sets the current thread's priority to NEW_PRIORITY. */
 void
 thread_set_priority (int new_priority) {
-	thread_current ()->priority = new_priority;
+	thread_current()->origin_priority = new_priority;
+	refresh_priority();
+
+	if (thread_get_priority() < list_entry(list_begin(&ready_list), struct thread, elem)->priority)
+	{
+		thread_yield();	
+	}
 }
 
 /* Returns the current thread's priority. */
@@ -510,8 +516,13 @@ init_thread (struct thread *t, const char *name, int priority) {
 	strlcpy (t->name, name, sizeof t->name);
 	t->tf.rsp = (uint64_t) t + PGSIZE - sizeof (void *);
 	t->priority = priority;
-	t->getuptick = 0;
+	t->origin_priority = priority;
 	t->magic = THREAD_MAGIC;
+	/*------------------[Project1 - Thread]------------------*/
+	t->getuptick = 0;
+	list_init(&t->donations);
+	t->wait_on_lock = NULL;
+
 }
 
 /* Chooses and returns the next thread to be scheduled.  Should
