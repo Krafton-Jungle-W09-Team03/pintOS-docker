@@ -94,6 +94,11 @@ struct thread {
 	int64_t getuptick;
 	/* Shared between thread.c and synch.c. */
 	struct list_elem elem;              /* List element. */
+	/* Donation variables */
+	struct list donations;				/* list of Donations (for multiple Donation).*/
+	struct list_elem d_elem;			/* donation List element. */
+	struct lock *wait_on_lock; 			/* lock that it waits for. */
+	int origin_priority;
 
 #ifdef USERPROG
 	/* Owned by userprog/process.c. */
