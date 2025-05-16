@@ -3,6 +3,7 @@
 
 #include <list.h>
 #include <stdbool.h>
+#include <debug.h> // UNUSED용 추가
 
 /* A counting semaphore. */
 struct semaphore {
@@ -27,13 +28,20 @@ void lock_acquire (struct lock *);
 bool lock_try_acquire (struct lock *);
 void lock_release (struct lock *);
 bool lock_held_by_current_thread (const struct lock *);
-
 /* Condition variable. */
-struct condition {
-	struct list waiters;        /* List of waiting threads. */
+struct condition
+{
+	struct list waiters; /* List of waiting threads. */
 };
 
-void cond_init (struct condition *);
+// ------------------[Project1 - Thread]------------------
+void donate_priority(void);
+void remove_with_lock(struct lock *);
+void refresh_priority(void);
+bool cmp_sema_priority(const struct list_elem *a_, const struct list_elem *b_, void *aux UNUSED);
+bool cmp_d_elem_priority(const struct list_elem *a_, const struct list_elem *b_, void *aux UNUSED);
+
+void cond_init(struct condition *);
 void cond_wait (struct condition *, struct lock *);
 void cond_signal (struct condition *, struct lock *);
 void cond_broadcast (struct condition *, struct lock *);

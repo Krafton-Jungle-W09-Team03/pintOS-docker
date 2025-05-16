@@ -94,6 +94,11 @@ struct thread {
 	int64_t getuptick;
 	/* Shared between thread.c and synch.c. */
 	struct list_elem elem;              /* List element. */
+	/* Donation variables */
+	struct list donations;				/* list of Donations (for multiple Donation).*/
+	struct list_elem d_elem;			/* donation List element. */
+	struct lock *wait_on_lock; 			/* lock that it waits for. */
+	int origin_priority;
 
 #ifdef USERPROG
 	/* Owned by userprog/process.c. */
@@ -134,7 +139,7 @@ void thread_exit (void) NO_RETURN;
 void thread_yield (void);
 // 정의한 함수 선언 - ch
 bool getuptick_less(const struct list_elem *a_, const struct list_elem *b_, void *aux UNUSED);
-bool priority_less(const struct list_elem *a_, const struct list_elem *b_, void *aux UNUSED);
+bool priority_more(const struct list_elem *a_, const struct list_elem *b_, void *aux UNUSED);
 void thread_sleep(int64_t getuptick);
 void wakeup(void);
 // end
