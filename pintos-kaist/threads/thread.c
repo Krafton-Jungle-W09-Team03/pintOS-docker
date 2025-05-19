@@ -317,6 +317,9 @@ thread_exit (void) {
 // 현재실행중인 쓰레드를 준비상태로 ready_list의 마지막에 넣는다.
 void
 thread_yield (void) {
+	if(thread_current() == idle_thread){
+		return;
+	}
 	struct thread *curr = thread_current ();
 	enum intr_level old_level;
 
