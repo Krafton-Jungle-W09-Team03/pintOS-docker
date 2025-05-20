@@ -204,6 +204,9 @@ process_wait (tid_t child_tid UNUSED) {
 	/* XXX: Hint) The pintos exit if process_wait (initd), we recommend you
 	 * XXX:       to add infinite loop here before
 	 * XXX:       implementing the process_wait. */
+	while(1){
+
+	}
 	return -1;
 }
 
@@ -329,6 +332,19 @@ load (const char *file_name, struct intr_frame *if_) {
 	bool success = false;
 	int i;
 
+	/*------------------[Project2 - Argument Passing]------------------*/
+	char *token, *save_ptr;
+	char *argv[99];
+	int argc = 0;
+
+	for (token = strtok_r(file_name, " ", &save_ptr); token != NULL;
+		token = strtok_r(NULL, " ", &save_ptr)){
+		argv[argc] = token;
+		argc++;
+	}
+	file_name = argv[0];
+	char *pos[argc];
+
 	/* Allocate and activate page directory. */
 	t->pml4 = pml4_create ();
 	if (t->pml4 == NULL)
@@ -414,8 +430,31 @@ load (const char *file_name, struct intr_frame *if_) {
 	/* Start address. */
 	if_->rip = ehdr.e_entry;
 
-	/* TODO: Your code goes here.
-	 * TODO: Implement argument passing (see project2/argument_passing.html). */
+	/*------------------[Project2 - Argument Passing]------------------*/
+	// 문자열 배열 크기만큼 반복문을 통해 rsp를 크기만큼 내리고 값을 넣는다
+	for(int j = argc - 1; j >= 0; j--){
+		if_->rsp = if_->rsp - (strlen(argv[j]) + 1);
+		memcpy(if_->rsp, argv[j], strlen(argv[j]) + 1);
+	}
+	// alignment를 맞춘다
+	if_->rsp = if_->rsp & ~0x7;
+
+	// 0으로 구분자를 넣는다.
+	if_->rsp = if_->rsp - sizeof(char *);
+	memset(if_->rsp, 0, sizeof(char *));
+
+	// 문자열들을 가리키는 포인터를 거꾸로 넣는다
+	for(int j = argc - 1; j >= 0; j--){
+		if_->rsp = if_->rsp - sizeof(argv[j]);
+		memcpy(if_->rsp, &argv[j], sizeof(argv[j]));
+	}
+	if_->R.rsi = if_->rsp;
+	if_->R.rdi = argc;
+
+	// return address = 0
+	if_->rsp = if_->rsp - sizeof(void(*)());
+	memset(if_->rsp, 0, sizeof(void(*)()));
+	// hex_dump(if_->rsp, if_->rsp, USER_STACK - if_->rsp, true);
 
 	success = true;
 
