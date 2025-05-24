@@ -22,6 +22,7 @@
 #include "vm/vm.h"
 #endif
 
+
 static void process_cleanup (void);
 static bool load (const char *file_name, struct intr_frame *if_);
 static void initd (void *f_name);
@@ -75,16 +76,12 @@ initd (void *f_name) {
 	NOT_REACHED ();
 }
 
-/* Clones the curren process as `name`. Returns the new process's thread id, or
+
+/* Clones the current process as `name`. Returns the new process's thread id, or
  * TID_ERROR if the thread cannot be created. */
 tid_t
 process_fork (const char *name, struct intr_frame *if_ UNUSED) {
-	/* Clone current thread to new thread.*/
-	/* Apply FUNC to each available pte entries including kernel's. */
-	//name :부모 프로세스 이름//
-
-	return thread_create (name,
-			PRI_DEFAULT, __do_fork, if_);
+	return thread_create(name, PRI_DEFAULT, __do_fork, if_);
 }
 
 #ifndef VM
@@ -99,21 +96,26 @@ duplicate_pte (uint64_t *pte, void *va, void *aux) {
 	bool writable;
 
 	/* 1. TODO: If the parent_page is kernel page, then return immediately. */
-
+	if(is_kern_pte(pte)){
+		return true;
+	}
 	/* 2. Resolve VA from the parent's page map level 4. */
 	parent_page = pml4_get_page (parent->pml4, va);
 
 	/* 3. TODO: Allocate new PAL_USER page for the child and set result to
 	 *    TODO: NEWPAGE. */
-
+	newpage = palloc_get_page(PAL_USER | PAL_ZERO);
 	/* 4. TODO: Duplicate parent's page to the new page and
 	 *    TODO: check whether parent's page is writable or not (set WRITABLE
 	 *    TODO: according to the result). */
-
+	memcpy(newpage, parent_page, PGSIZE);
+	writable = is_writable(pte);
 	/* 5. Add new page to child's page table at address VA with WRITABLE
 	 *    permission. */
 	if (!pml4_set_page (current->pml4, va, newpage, writable)) {
-		/* 6. TODO: if fail to insert page, do error handling. */
+		/* 6. TODO: if fail to insert page, do error handling. */	
+		palloc_free_page(newpage);
+		return false;
 	}
 	return true;
 }
@@ -123,29 +125,18 @@ duplicate_pte (uint64_t *pte, void *va, void *aux) {
  * Hint) parent->tf does not hold the userland context of the process.
  *       That is, you are required to pass second argument of process_fork to
  *       this function. */
-
-/* 부모 프로세스의 실행 컨텍스트(= 유저 레벨 레지스터 상태, 스택, 메모리 등)를
-자식에게 복사하는 스레드 함수입니다.
-즉, 이 함수는 fork()로 자식이 만들어졌을 때 실제로 자식 프로세스를 실행시킵니다.
-parent->tf는 **부모의 user context(유저 레지스터 상태)**를 담고 있지 않아요.
-그래서, process_fork()에서 두 번째 인자로 받은
-**유저 context 정보(intr_frame 복사본)**을 이 함수에 넘겨야 해요.*/
 static void
 __do_fork (void *aux) {
 	struct intr_frame if_;
-	struct thread *parent = thread_current()->parent;
-	// current 는 자식이다.
+	struct intr_frame *parent_if = (struct intr_frame *)aux;
 	struct thread *current = thread_current ();
-	/* TODO: somehow pass the parent_if. (i.e. process_fork()'s if_) */
-	struct intr_frame *parent_if = (struct intr_frame*) aux;
+	struct thread *parent = current->parent;
+	struct file *parent_file = NULL;
 	bool succ = true;
-
-	/* 1. Read the cpu context to local stack. */
-	// if_ 에 부모 인터럼트 프레임 그대로 복사함.
+/* 1. Read the cpu context to local stack. */
 	memcpy (&if_, parent_if, sizeof (struct intr_frame));
 
 	/* 2. Duplicate PT */
-	//pml4를 복사함. 새로 만든 pml4를 현재 실행 중인 거에 넣음.
 	current->pml4 = pml4_create();
 	if (current->pml4 == NULL)
 		goto error;
@@ -165,17 +156,26 @@ __do_fork (void *aux) {
 	 * TODO:       in include/filesys/file.h. Note that parent should not return
 	 * TODO:       from the fork() until this function successfully duplicates
 	 * TODO:       the resources of parent.*/
-
+	parent_file = filesys_open(parent->name);
+	if (parent_file == NULL)
+	{
+		printf("do_fork: %s: open failed\n", parent_file);
+		goto error;
+	}
+	struct file *child_file = file_duplicate(parent_file);
+	process_init ();
+	palloc_free_page(aux);
 	
 
-	process_init ();
-
 	/* Finally, switch to the newly created process. */
-	if (succ)
-		do_iret (&if_);
+	if (succ){
+		do_iret(&if_);
+	}
+
 error:
 	thread_exit ();
 }
+
 
 /* Switch the current execution context to the f_name.
  * Returns -1 on fail. */
@@ -389,6 +389,7 @@ static bool load_segment (struct file *file, off_t ofs, uint8_t *upage,
  * 실패하면 false를 반환합니다.
  */
 
+
 static bool
 load (const char *file_name, struct intr_frame *if_) {
 	struct thread *t = thread_current ();
@@ -396,14 +397,26 @@ load (const char *file_name, struct intr_frame *if_) {
 	struct file *file = NULL;
 	off_t file_ofs;
 	bool success = false;
-	int i,j, argc = 0;
-	char *token, *save_ptr;
-	char *argv[99];
-	char *fn_copy = palloc_get_page(0);
+	int i;
 
-	//fn_copy : file_name 원본 복사 ! 파싱하면서 원본 바뀜
+	/*------------------[Project2 - Argument Passing]------------------*/
+	char *token, *save_ptr, *fn_copy;
+	char *argv[99];
+	int argc = 0;
+	fn_copy = palloc_get_page(0);
 	if (fn_copy == NULL)
 		return TID_ERROR;
+
+	strlcpy(fn_copy, file_name, PGSIZE);
+
+	for (token = strtok_r(fn_copy, " ", &save_ptr); token != NULL;
+		 token = strtok_r(NULL, " ", &save_ptr))
+	{
+		argv[argc] = token;
+		argc++;
+	}
+	file_name = argv[0];
+	char *pos[argc];
 
 	/* Allocate and activate page directory. */
 	t->pml4 = pml4_create ();
@@ -411,22 +424,8 @@ load (const char *file_name, struct intr_frame *if_) {
 		goto done;
 	process_activate (thread_current ());
 
-
-	///////추가//////////
-	// 첫 token : args-single // 두번째 : onearg
-	// for (token = strtok_r (file_name, " ", &save_ptr); token != NULL;token = strtok_r (NULL, " ", &save_ptr)){
-	// 	printf ("'%s'\n", token);
-	// 	}
-	//
-
-	token = strtok_r (file_name," ", &save_ptr);
-	//token에 첫 문자배열 포인터 저장됨.
-	argv[0] = token;
-	argc++;
-
 	/* Open executable file. */
-	file = filesys_open (token);
-
+	file = filesys_open (file_name);
 	if (file == NULL) {
 		printf ("load: %s: open failed\n", file_name);
 		goto done;
@@ -501,71 +500,26 @@ load (const char *file_name, struct intr_frame *if_) {
 	if (!setup_stack (if_))
 		goto done;
 
-		// 첫 token : args-single // 두번째 : onearg
-
-	while (token != NULL ) {
-		token = strtok_r(NULL, " ", &save_ptr);
-		argv[argc] = token;
-		argc++;
-	}
-
-	argc--;
-	//if_->rsp: 유저 스택 최상단. 추적 포인터 !
-	uint64_t rsp = if_->rsp;
-	uint8_t padding_num;
-	char *argvs[99];
-	int k = argc-1;
-
-	while (k >= 0) {
-		int len = strlen(argv[k]) + 1;
-		rsp -= len;
-		//시작주소 길이만큼 내려서 arg[k]복사해서 넣어준다. 사이즈 : len
-		memcpy((void *)rsp, argv[k],len);
-		//주소 저장해준다. 끝에서 부터
-		argvs[k] = (char *)rsp;
-    	k --;
-	}
-	
-	padding_num = rsp & 0x7;
-	rsp -= padding_num;
-	memset((void *)rsp,0,padding_num);
-
-	rsp -= 8;
-	memset((void *)rsp, 0 ,8);
-	//채워넣는다.
-
-	argvs[argc] = NULL;
-	k = argc-1;
-
-	while (k >= 0) {
-		rsp -= 8;
-		memcpy((void *)rsp, &argvs[k],8);
-    	k --;
-	}
-	//????왜 
-
-	char **argv_addr = (char**)rsp;
-
-	rsp -= 8;
-	memcpy((void *)rsp, &argv_addr, 8);  
-
-	rsp -= 8;
-	memcpy((void*)rsp, &argc, 8);
-
-	rsp -= 8;
-	memset((void *)rsp, 0, 8);
-
-
-	/* Start address.1 */
+	/* Start address. */
 	if_->rip = ehdr.e_entry;
-	if_->rsp = rsp;
-	if_->R.rsi = (uint64_t)argv_addr;
+
+	/*------------------[Project2 - Argument Passing]------------------*/
+	for(int j = argc - 1; j >= 0; j--){
+		if_->rsp = if_->rsp - (strlen(argv[j]) + 1);
+		pos[j] = if_->rsp;
+		memcpy(if_->rsp, argv[j], strlen(argv[j]) + 1);
+	}
+	if_->rsp = if_->rsp & ~0x7;
+	if_->rsp = if_->rsp - sizeof(char *);
+	memset(if_->rsp, 0, sizeof(char *));
+	for(int j = argc - 1; j >= 0; j--){
+		if_->rsp = if_->rsp - 8;
+		memcpy(if_->rsp, &pos[j], 8);
+	}
+	if_->R.rsi = (uint64_t)if_->rsp;
 	if_->R.rdi = argc;
-
-
-	// hex_dump(if_->rsp, if_->rsp, KERN_BASE - if_->rsp -8, true);
-	/* TODO: Your code goes here.
-	 * TODO: Implement argument passing (see project2/argument_passing.html). */
+	if_->rsp = if_->rsp - sizeof(void(*)());
+	memset(if_->rsp, 0, sizeof(void(*)()));
 
 	success = true;
 
@@ -574,6 +528,7 @@ done:
 	file_close (file);
 	return success;
 }
+
 
 
 /* Checks whether PHDR describes a valid, loadable segment in
