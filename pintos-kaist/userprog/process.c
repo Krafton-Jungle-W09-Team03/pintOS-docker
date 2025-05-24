@@ -26,6 +26,8 @@ static void process_cleanup (void);
 static bool load (const char *file_name, struct intr_frame *if_);
 static void initd (void *f_name);
 static void __do_fork (void *);
+void hex_dump (uintptr_t ofs, const void *buf, size_t size, bool ascii);
+
 
 /* General process initializer for initd and other process. */
 static void
@@ -41,8 +43,9 @@ process_init (void) {
 tid_t
 process_create_initd (const char *file_name) {
 	char *fn_copy;
+	char *token, *save_ptr;
 	tid_t tid;
-
+	//file_name : args-single onearg
 	/* Make a copy of FILE_NAME.
 	 * Otherwise there's a race between the caller and load(). */
 	fn_copy = palloc_get_page (0);
@@ -50,8 +53,9 @@ process_create_initd (const char *file_name) {
 		return TID_ERROR;
 	strlcpy (fn_copy, file_name, PGSIZE);
 
+	token = strtok_r (file_name, " ", &save_ptr);
 	/* Create a new thread to execute FILE_NAME. */
-	tid = thread_create (file_name, PRI_DEFAULT, initd, fn_copy);
+	tid = thread_create (token, PRI_DEFAULT, initd, fn_copy);
 	if (tid == TID_ERROR)
 		palloc_free_page (fn_copy);
 	return tid;
@@ -71,13 +75,16 @@ initd (void *f_name) {
 	NOT_REACHED ();
 }
 
-/* Clones the current process as `name`. Returns the new process's thread id, or
+/* Clones the curren process as `name`. Returns the new process's thread id, or
  * TID_ERROR if the thread cannot be created. */
 tid_t
 process_fork (const char *name, struct intr_frame *if_ UNUSED) {
 	/* Clone current thread to new thread.*/
+	/* Apply FUNC to each available pte entries including kernel's. */
+	//name :부모 프로세스 이름//
+
 	return thread_create (name,
-			PRI_DEFAULT, __do_fork, thread_current ());
+			PRI_DEFAULT, __do_fork, if_);
 }
 
 #ifndef VM
@@ -116,19 +123,29 @@ duplicate_pte (uint64_t *pte, void *va, void *aux) {
  * Hint) parent->tf does not hold the userland context of the process.
  *       That is, you are required to pass second argument of process_fork to
  *       this function. */
+
+/* 부모 프로세스의 실행 컨텍스트(= 유저 레벨 레지스터 상태, 스택, 메모리 등)를
+자식에게 복사하는 스레드 함수입니다.
+즉, 이 함수는 fork()로 자식이 만들어졌을 때 실제로 자식 프로세스를 실행시킵니다.
+parent->tf는 **부모의 user context(유저 레지스터 상태)**를 담고 있지 않아요.
+그래서, process_fork()에서 두 번째 인자로 받은
+**유저 context 정보(intr_frame 복사본)**을 이 함수에 넘겨야 해요.*/
 static void
 __do_fork (void *aux) {
 	struct intr_frame if_;
-	struct thread *parent = (struct thread *) aux;
+	struct thread *parent = thread_current()->parent;
+	// current 는 자식이다.
 	struct thread *current = thread_current ();
 	/* TODO: somehow pass the parent_if. (i.e. process_fork()'s if_) */
-	struct intr_frame *parent_if;
+	struct intr_frame *parent_if = (struct intr_frame*) aux;
 	bool succ = true;
 
 	/* 1. Read the cpu context to local stack. */
+	// if_ 에 부모 인터럼트 프레임 그대로 복사함.
 	memcpy (&if_, parent_if, sizeof (struct intr_frame));
 
 	/* 2. Duplicate PT */
+	//pml4를 복사함. 새로 만든 pml4를 현재 실행 중인 거에 넣음.
 	current->pml4 = pml4_create();
 	if (current->pml4 == NULL)
 		goto error;
@@ -149,6 +166,8 @@ __do_fork (void *aux) {
 	 * TODO:       from the fork() until this function successfully duplicates
 	 * TODO:       the resources of parent.*/
 
+	
+
 	process_init ();
 
 	/* Finally, switch to the newly created process. */
@@ -160,6 +179,8 @@ error:
 
 /* Switch the current execution context to the f_name.
  * Returns -1 on fail. */
+
+//f_name : args-single onearg
 int
 process_exec (void *f_name) {
 	char *file_name = f_name;
@@ -176,6 +197,8 @@ process_exec (void *f_name) {
 	/* We first kill the current context */
 	process_cleanup ();
 
+	/*filename : args-single onearg*/
+
 	/* And then load the binary */
 	success = load (file_name, &_if);
 
@@ -183,6 +206,8 @@ process_exec (void *f_name) {
 	palloc_free_page (file_name);
 	if (!success)
 		return -1;
+	
+	// hex_dump(_if.rsp, _if.rsp, KERN_BASE - _if.rsp, true);
 
 	/* Start switched process. */
 	do_iret (&_if);
@@ -204,7 +229,42 @@ process_wait (tid_t child_tid UNUSED) {
 	/* XXX: Hint) The pintos exit if process_wait (initd), we recommend you
 	 * XXX:       to add infinite loop here before
 	 * XXX:       implementing the process_wait. */
-	return -1;
+
+	struct thread *curr = thread_current();
+	struct thread *child = NULL;
+	// struct thread *head = list_entry(list_begin(&curr->children), struct thread, ch_elem);
+	struct list_elem *curr_elem = list_begin(&curr->children); 
+	int check_tid = -1;
+	
+	//자식 tid 일치하는 스레드 찾아서 thread 반환하기.
+	while (curr_elem != list_end(&curr->children))
+	{
+		child = list_entry(curr_elem, struct thread, ch_elem);
+		check_tid = child->tid;
+		if (check_tid == child_tid){
+			break;
+		}
+		curr_elem = curr_elem->next;
+	}
+
+	// 못 찾은 경우
+	if(check_tid == -1){
+		return -1;
+	}
+
+	//찾으면 넘어간다.
+	if(child->wait_check == 1){
+		return -1;
+	}
+	child->wait_check = 1;
+	//자식을 sema_down	
+	sema_down(&child->wait_sema);	
+	//자식 종료
+	int status = child->exit_status;
+	list_remove(curr_elem);
+	sema_up(&child->child_sema);
+
+	return status;
 }
 
 /* Exit the process. This function is called by thread_exit (). */
@@ -216,6 +276,8 @@ process_exit (void) {
 	 * TODO: project2/process_termination.html).
 	 * TODO: We recommend you to implement process resource cleanup here. */
 
+	sema_up(&curr->wait_sema);
+	sema_down(&curr->child_sema);
 	process_cleanup ();
 }
 
@@ -320,6 +382,13 @@ static bool load_segment (struct file *file, off_t ofs, uint8_t *upage,
  * Stores the executable's entry point into *RIP
  * and its initial stack pointer into *RSP.
  * Returns true if successful, false otherwise. */
+/* FILE_NAME에서 ELF 실행 파일을 현재 스레드로 로드합니다.
+ * 실행 파일의 진입 지점(entry point)은 *RIP에 저장하고,
+ * 초기 스택 포인터(stack pointer)는 *RSP에 저장합니다.
+ * 로드에 성공하면 true를 반환하고,
+ * 실패하면 false를 반환합니다.
+ */
+
 static bool
 load (const char *file_name, struct intr_frame *if_) {
 	struct thread *t = thread_current ();
@@ -327,7 +396,14 @@ load (const char *file_name, struct intr_frame *if_) {
 	struct file *file = NULL;
 	off_t file_ofs;
 	bool success = false;
-	int i;
+	int i,j, argc = 0;
+	char *token, *save_ptr;
+	char *argv[99];
+	char *fn_copy = palloc_get_page(0);
+
+	//fn_copy : file_name 원본 복사 ! 파싱하면서 원본 바뀜
+	if (fn_copy == NULL)
+		return TID_ERROR;
 
 	/* Allocate and activate page directory. */
 	t->pml4 = pml4_create ();
@@ -335,8 +411,22 @@ load (const char *file_name, struct intr_frame *if_) {
 		goto done;
 	process_activate (thread_current ());
 
+
+	///////추가//////////
+	// 첫 token : args-single // 두번째 : onearg
+	// for (token = strtok_r (file_name, " ", &save_ptr); token != NULL;token = strtok_r (NULL, " ", &save_ptr)){
+	// 	printf ("'%s'\n", token);
+	// 	}
+	//
+
+	token = strtok_r (file_name," ", &save_ptr);
+	//token에 첫 문자배열 포인터 저장됨.
+	argv[0] = token;
+	argc++;
+
 	/* Open executable file. */
-	file = filesys_open (file_name);
+	file = filesys_open (token);
+
 	if (file == NULL) {
 		printf ("load: %s: open failed\n", file_name);
 		goto done;
@@ -411,9 +501,69 @@ load (const char *file_name, struct intr_frame *if_) {
 	if (!setup_stack (if_))
 		goto done;
 
-	/* Start address. */
-	if_->rip = ehdr.e_entry;
+		// 첫 token : args-single // 두번째 : onearg
 
+	while (token != NULL ) {
+		token = strtok_r(NULL, " ", &save_ptr);
+		argv[argc] = token;
+		argc++;
+	}
+
+	argc--;
+	//if_->rsp: 유저 스택 최상단. 추적 포인터 !
+	uint64_t rsp = if_->rsp;
+	uint8_t padding_num;
+	char *argvs[99];
+	int k = argc-1;
+
+	while (k >= 0) {
+		int len = strlen(argv[k]) + 1;
+		rsp -= len;
+		//시작주소 길이만큼 내려서 arg[k]복사해서 넣어준다. 사이즈 : len
+		memcpy((void *)rsp, argv[k],len);
+		//주소 저장해준다. 끝에서 부터
+		argvs[k] = (char *)rsp;
+    	k --;
+	}
+	
+	padding_num = rsp & 0x7;
+	rsp -= padding_num;
+	memset((void *)rsp,0,padding_num);
+
+	rsp -= 8;
+	memset((void *)rsp, 0 ,8);
+	//채워넣는다.
+
+	argvs[argc] = NULL;
+	k = argc-1;
+
+	while (k >= 0) {
+		rsp -= 8;
+		memcpy((void *)rsp, &argvs[k],8);
+    	k --;
+	}
+	//????왜 
+
+	char **argv_addr = (char**)rsp;
+
+	rsp -= 8;
+	memcpy((void *)rsp, &argv_addr, 8);  
+
+	rsp -= 8;
+	memcpy((void*)rsp, &argc, 8);
+
+	rsp -= 8;
+	memset((void *)rsp, 0, 8);
+
+
+	/* Start address.1 */
+	if_->rip = ehdr.e_entry;
+	if_->rsp = rsp;
+	if_->R.rsi = (uint64_t)argv_addr;
+	if_->R.rdi = argc;
+
+
+	// hex_dump(if_->rsp, if_->rsp, KERN_BASE - if_->rsp -8, true);
 	/* TODO: Your code goes here.
 	 * TODO: Implement argument passing (see project2/argument_passing.html). */
 
@@ -535,6 +685,7 @@ load_segment (struct file *file, off_t ofs, uint8_t *upage,
 }
 
 /* Create a minimal stack by mapping a zeroed page at the USER_STACK */
+/*유저스택 만들어주는 함수*/
 static bool
 setup_stack (struct intr_frame *if_) {
 	uint8_t *kpage;
