@@ -214,6 +214,11 @@ thread_create (const char *name, int priority,
 	t->tf.cs = SEL_KCSEG;
 	t->tf.eflags = FLAG_IF;
 
+	t->next_fd = 2;
+	for(int i = 0; i < 64; i++){
+		t->fdt[i] = NULL;
+	}
+	t->parent = thread_current();
 	/* Add to run queue. */
 	thread_unblock (t);
 	/* compare the priorities of the currently running
@@ -317,9 +322,8 @@ thread_exit (void) {
 // 현재실행중인 쓰레드를 준비상태로 ready_list의 마지막에 넣는다.
 void
 thread_yield (void) {
-	if(thread_current() == idle_thread){
-		return;
-	}
+	if(thread_current() != idle_thread){
+		
 	struct thread *curr = thread_current ();
 	enum intr_level old_level;
 
@@ -330,6 +334,7 @@ thread_yield (void) {
 		list_insert_ordered(&ready_list, &curr->elem, priority_more, NULL);
 	do_schedule (THREAD_READY);
 	intr_set_level (old_level);
+	}
 }
 
 // 현재 쓰레드를 블록하고  sleep_list로 이동시킨다.
