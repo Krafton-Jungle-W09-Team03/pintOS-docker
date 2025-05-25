@@ -83,7 +83,7 @@ int syscall_wait(pid_t pid)
 
 pid_t syscall_fork(const char *thread_name, struct intr_frame *if_ UNUSED)
 {
-	process_fork(thread_name, if_);
+	return process_fork(thread_name, if_);
 }
 
 void syscall_exit(int status)
@@ -101,14 +101,18 @@ int syscall_write(int fd, const void *buffer, unsigned size)
 
 	if (fd == 1)
 	{
+		// putbuf(buffer, size);
+		lock_acquire(&filesys_lock);
 		putbuf(buffer, size);
+		lock_release(&filesys_lock);
+		
 		return size;
 	}
 	else if (fd == 0)
 	{
 		return -1;
 	}
-	else if (1 < fd < 64)
+	else if (fd > 1 && fd < 64)
 	{
 		struct file *write_file = fd_tofile(fd);
 		if (write_file == NULL)
@@ -123,6 +127,7 @@ int syscall_write(int fd, const void *buffer, unsigned size)
 			return wri;
 		}
 	}
+	return -1;
 }
 
 int syscall_exec(const char* cmd_line){
@@ -131,7 +136,7 @@ int syscall_exec(const char* cmd_line){
 	if(status == -1){
 		syscall_exit(status);
 	}
-	return status;
+	return thread_current()->tid;
 }
 
 bool syscall_remove(const char *file)
@@ -212,7 +217,7 @@ int syscall_read(int fd, void *buffer, unsigned size)
 	{
 		syscall_exit(-1);
 	}
-	else if (1 < fd < 64)
+	else if (fd > 1 && fd < 64)
 	{
 
 		struct file *read_file = fd_tofile(fd);
