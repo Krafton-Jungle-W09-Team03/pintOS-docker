@@ -190,6 +190,7 @@ tid_t
 thread_create (const char *name, int priority,
 		thread_func *function, void *aux) {
 	struct thread *t;
+	struct thread *curr = thread_current();
 	tid_t tid;
 
 	ASSERT (function != NULL);
@@ -214,8 +215,23 @@ thread_create (const char *name, int priority,
 	t->tf.cs = SEL_KCSEG;
 	t->tf.eflags = FLAG_IF;
 
+	
+	for(int i = 0; i < 64; i++)
+	{
+		t->fd_table[i] == NULL;
+	}
+	t->fd = -1;
+	t->running_file = NULL;
+
+
+	t->parent = curr;
+	//부모 children list 에 insert 한다.
+	list_push_back(&curr->children, &t->ch_elem);
 	/* Add to run queue. */
+	//ready_list 에 넣어준다.
 	thread_unblock (t);
+	
+
 	/* compare the priorities of the currently running
 	thread and the newly inserted one. Yield the CPU if the
 	newly arriving thread has higher priority*/
@@ -318,8 +334,11 @@ thread_exit (void) {
 void
 thread_yield (void) {
 	struct thread *curr = thread_current ();
+		if (curr == idle_thread){
+		return;
+	}
 	enum intr_level old_level;
-
+	
 	ASSERT (!intr_context ());
 
 	old_level = intr_disable ();
@@ -524,7 +543,11 @@ init_thread (struct thread *t, const char *name, int priority) {
 	/*------------------[Project1 - Thread]------------------*/
 	t->getuptick = 0;
 	list_init(&t->donations);
+	list_init(&t->children);
 	t->wait_on_lock = NULL;
+	sema_init(&t->wait_sema,0);
+	sema_init(&t->child_sema,0);
+	sema_init(&t->fork_sema, 0);
 
 }
 
