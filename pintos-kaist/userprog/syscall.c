@@ -81,17 +81,40 @@ pid_t syscall_fork(const char *thread_name, struct intr_frame *if_ UNUSED)
 void syscall_exit(int status)
 {
 	struct thread* curr = thread_current();
+	curr->exit_status = status;
 	printf("%s: exit(%d)\n", curr->name, status);
 	thread_exit();
 }
 
 int syscall_write(int fd, const void *buffer, unsigned size)
 {
-	if(fd == 1){
+	check_addr(buffer);
+	check_addr(buffer + size - 1);
+
+	if (fd == 1)
+	{
 		putbuf(buffer, size);
 		return size;
 	}
-	return -1;
+	else if (fd == 0)
+	{
+		return -1;
+	}
+	else if (1 < fd < 64)
+	{
+		struct file *write_file = fd_tofile(fd);
+		if (write_file == NULL)
+		{
+			return 0;
+		}
+		else
+		{
+			lock_acquire(&filesys_lock);
+			int wri = file_write(write_file, buffer, size);
+			lock_release(&filesys_lock);
+			return wri;
+		}
+	}
 }
 
 void syscall_half(void)
@@ -117,7 +140,7 @@ int syscall_open(const char *file)
 	bool is_not_full = false;
 	for (open_fd = 2; open_fd < 64; open_fd++)
 	{
-		if (curr->fdt[open_fd] == NULL)
+		if (curr->fd_table[open_fd] == NULL)
 		{
 			is_not_full = true;
 			break;
@@ -132,8 +155,8 @@ int syscall_open(const char *file)
 	if (open_file == NULL)
 		return -1;
 
-	curr->fdt[open_fd] = open_file;
-	curr->next_fd = open_fd;
+	curr->fd_table[open_fd] = open_file;
+	curr->fd = open_fd;
 
 	return open_fd;
 }
@@ -263,7 +286,7 @@ void syscall_close(int fd)
 	lock_acquire(&filesys_lock);
 	file_close(cl_file);
 	lock_release(&filesys_lock);
-	curr->fdt[fd] = NULL;
+	curr->fd_table[fd] = NULL;
 }
 
 /* The main system call interface */
@@ -361,6 +384,6 @@ struct file *fd_tofile(int fd)
 	}
 
 	struct thread *curr = thread_current();
-	struct file *file = curr->fdt[fd];
+	struct file *file = curr->fd_table[fd];
 	return file;
 }
