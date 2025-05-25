@@ -215,6 +215,14 @@ thread_create (const char *name, int priority,
 	t->tf.cs = SEL_KCSEG;
 	t->tf.eflags = FLAG_IF;
 
+	
+	for(int i = 0; i < 64; i++)
+	{
+		t->fd_table[i] == NULL;
+	}
+	t->fd = -1;
+	t->running_file = NULL;
+
 
 	t->parent = curr;
 	//부모 children list 에 insert 한다.
@@ -539,6 +547,7 @@ init_thread (struct thread *t, const char *name, int priority) {
 	t->wait_on_lock = NULL;
 	sema_init(&t->wait_sema,0);
 	sema_init(&t->child_sema,0);
+	sema_init(&t->fork_sema, 0);
 
 }
 

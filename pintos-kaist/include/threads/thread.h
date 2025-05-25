@@ -103,9 +103,11 @@ struct thread {
 	struct thread *parent;
 
 	struct file *fd_table[64];
+	struct file *running_file;
 	int fd;
 	struct semaphore wait_sema;
 	struct semaphore child_sema;
+	struct semaphore fork_sema;
 
 	struct list children;
 	struct list_elem ch_elem;
