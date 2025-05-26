@@ -46,19 +46,21 @@ tid_t process_create_initd(const char *file_name)
 	char *fn_copy;
 	char *token, *save_ptr;
 	tid_t tid;
-	// file_name : args-single onearg
 	/* Make a copy of FILE_NAME.
 	 * Otherwise there's a race between the caller and load(). */
-	fn_copy = palloc_get_page(0);
+	fn_copy = palloc_get_page(PAL_ZERO);
 	if (fn_copy == NULL)
 		return TID_ERROR;
 	strlcpy(fn_copy, file_name, PGSIZE);
 
 	token = strtok_r(file_name, " ", &save_ptr);
+
 	/* Create a new thread to execute FILE_NAME. */
 	tid = thread_create(token, PRI_DEFAULT, initd, fn_copy);
 	if (tid == TID_ERROR)
+	{
 		palloc_free_page(fn_copy);
+	}
 	return tid;
 }
 
@@ -85,7 +87,7 @@ tid_t process_fork(const char *name, struct intr_frame *if_ UNUSED)
 
 	if (tid == -1)
 	{
-		return TID_ERROR;
+		syscall_exit(TID_ERROR);
 	}
 
 	struct thread *curr = thread_current();
@@ -105,14 +107,12 @@ tid_t process_fork(const char *name, struct intr_frame *if_ UNUSED)
 		curr_elem = curr_elem->next;
 	}
 
-	if (check_tid == -1)
-	{
+	if (check_tid == -1){
 		return TID_ERROR;
 	}
 
 	sema_down(&child->fork_sema);
-	if (child->exit_status == TID_ERROR)
-	{
+	if (child->exit_status == TID_ERROR){
 		return TID_ERROR;
 	}
 
@@ -178,7 +178,6 @@ __do_fork(void *aux)
 	/* 1. Read the cpu context to local stack. */
 	memcpy(&if_, parent_if, sizeof(struct intr_frame));
 
-	// if_.R.rax = 0; // 추가
 
 	/* 2. Duplicate PT */
 	current->pml4 = pml4_create();
@@ -207,17 +206,14 @@ __do_fork(void *aux)
 			struct file *new_file = file_duplicate(parent->fd_table[i]);
 			if (new_file == NULL)
 			{
-				// lock_release(&filesys_lock);
 				goto error;
 			}
 			current->fd_table[i] = new_file;
 		}
 	}
-	// lock_release(&fork_lock);
 	current->fd = parent->fd;
 
 	sema_up(&current->fork_sema);
-	// process_init ();
 
 	/* Finally, switch to the newly created process. */
 	if (succ)
@@ -228,24 +224,20 @@ __do_fork(void *aux)
 
 error:
 	sema_up(&current->fork_sema);
-	// syscall_exit(TID_ERROR);
-	thread_exit ();
+	syscall_exit(TID_ERROR);
 }
 
 /* Switch the current execution context to the f_name.
  * Returns -1 on fail. */
 
-// f_name : args-single onearg
 int process_exec(void *f_name)
 {
 	char *file_name = f_name;
 	char *fn_copy;
-	// char *token, *save_ptr;
 	bool success;
 	fn_copy = palloc_get_page(PAL_ZERO);
 	if (fn_copy == NULL)
 		return TID_ERROR;
-
 	strlcpy(fn_copy, file_name, PGSIZE);
 
 	/* We cannot use the intr_frame in the thread structure.
@@ -260,15 +252,9 @@ int process_exec(void *f_name)
 	process_cleanup();
 
 	/* And then load the binary */
-	// success = load(file_name, &_if);
 	success = load(fn_copy, &_if);
 
 	/* If load failed, quit. */
-	// if (!success){
-	// 	palloc_free_page(file_name);
-	// 	return -1;
-	// }
-
 	/* Start switched process. */
 	if (!success)
 	{
@@ -297,7 +283,6 @@ int process_wait(tid_t child_tid UNUSED)
 
 	struct thread *curr = thread_current();
 	struct thread *child = NULL;
-	// struct thread *head = list_entry(list_begin(&curr->children), struct thread, ch_elem);
 	struct list_elem *curr_elem = list_begin(&curr->children);
 	int check_tid = -1;
 
@@ -336,6 +321,11 @@ int process_wait(tid_t child_tid UNUSED)
 }
 
 /* Exit the process. This function is called by thread_exit (). */
+// 	/* TODO: Your code goes here.
+// 	 * TODO: Implement process termination message (see
+// 	 * TODO: project2/process_termination.html).
+// 	 * TODO: We recommend you to implement process resource cleanup here. */
+
 void process_exit(void)
 {
 	struct thread *curr = thread_current();
@@ -343,13 +333,35 @@ void process_exit(void)
 	 * TODO: Implement process termination message (see
 	 * TODO: project2/process_termination.html).
 	 * TODO: We recommend you to implement process resource cleanup here. */
-	file_close(curr->running_file);
+	if (curr->running_file != NULL){
+		file_close(curr->running_file);
+		curr->running_file = NULL;
+	}
 
 	sema_up(&curr->wait_sema);
+	struct list_elem *e, *next;
+	for (e = list_begin(&curr->children); e != list_end(&curr->children); e = next)
+	{
+		next = list_next(e);
+		struct thread *child = list_entry(e, struct thread, ch_elem);
+		if (!child->wait_check)
+		{
+			sema_up(&child->child_sema); // 자식도 언블럭되도록 함
+		}
+	}
 	sema_down(&curr->child_sema);
-	// file_allow_write(&curr->running_file);
+	for (int i = 0; i < 64; i++)
+	{
+		if (curr->fd_table[i] != NULL)
+		{
+			file_close(curr->fd_table[i]);
+			curr->fd_table[i] = NULL;
+		}
+	}
+	
 	process_cleanup();
 }
+
 
 /* Free the current process's resources. */
 static void
@@ -482,21 +494,12 @@ load(const char *file_name, struct intr_frame *if_)
 		return TID_ERROR;
 
 	strlcpy(fn_copy, file_name, PGSIZE);
-
-	// for (token = strtok_r(fn_copy, " ", &save_ptr); token != NULL;
-	// 	 token = strtok_r(NULL, " ", &save_ptr))
-	// {
-	// 	argv[argc] = token;
-	// 	argc++;
-	// }
-
-	token = strtok_r(fn_copy, " ", &save_ptr);
-	for( argc = 0; token != NULL;){
+	for (token = strtok_r(fn_copy, " ", &save_ptr); token != NULL;
+		 token = strtok_r(NULL, " ", &save_ptr))
+	{
 		argv[argc] = token;
 		argc++;
-		token = strtok_r(NULL, " ", &save_ptr);
 	}
-
 
 	file_name = argv[0];
 	char *pos[argc];
@@ -507,14 +510,14 @@ load(const char *file_name, struct intr_frame *if_)
 		goto done;
 	process_activate(thread_current()); 
 
+
 	/* Open executable file. */
 	file = filesys_open(file_name);
 	if (file == NULL)
-	{
+	{	
 		printf("load: %s: open failed\n", file_name);
 		goto done;
 	}
-
 
 	/* Read and verify executable header. */
 	if (file_read(file, &ehdr, sizeof ehdr) != sizeof ehdr || memcmp(ehdr.e_ident, "\177ELF\2\1\1", 7) || ehdr.e_type != 2 || ehdr.e_machine != 0x3E // amd64
@@ -592,7 +595,7 @@ load(const char *file_name, struct intr_frame *if_)
 	/* Start address. */
 	if_->rip = ehdr.e_entry;
 
-	/*------------------[Project2 - Argument Passing]------------------*/
+	// /*------------------[Project2 - Argument Passing]------------------*/
 	for (int j = argc - 1; j >= 0; j--)
 	{
 		if_->rsp = if_->rsp - (strlen(argv[j]) + 1);
@@ -612,12 +615,15 @@ load(const char *file_name, struct intr_frame *if_)
 	if_->rsp = if_->rsp - sizeof(void (*)());
 	memset(if_->rsp, 0, sizeof(void (*)()));
 
+	/*------------------[Project2 - Argument Passing]------------------*/
+
 	success = true;
 
 done:
 	/* We arrive here whether the load is successful or not. */
 
-	// file_close(file);
+	if (!success && file != NULL)
+        file_close(file);
 	palloc_free_page(fn_copy);
 	return success;
 }
