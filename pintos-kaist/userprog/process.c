@@ -55,6 +55,8 @@ tid_t process_create_initd(const char *file_name)
 	strlcpy(fn_copy, file_name, PGSIZE);
 
 	token = strtok_r(file_name, " ", &save_ptr);
+
+	// token = strtok_r(fn_copy, " ", &save_ptr);
 	/* Create a new thread to execute FILE_NAME. */
 	tid = thread_create(token, PRI_DEFAULT, initd, fn_copy);
 	if (tid == TID_ERROR)
@@ -245,7 +247,6 @@ int process_exec(void *f_name)
 	fn_copy = palloc_get_page(PAL_ZERO);
 	if (fn_copy == NULL)
 		return TID_ERROR;
-
 	strlcpy(fn_copy, file_name, PGSIZE);
 
 	/* We cannot use the intr_frame in the thread structure.
@@ -343,11 +344,14 @@ void process_exit(void)
 	 * TODO: Implement process termination message (see
 	 * TODO: project2/process_termination.html).
 	 * TODO: We recommend you to implement process resource cleanup here. */
-	file_close(curr->running_file);
+	if (curr->running_file){
+		// file_allow_write(&curr->running_file);
+		file_close(curr->running_file);
+	}
 
 	sema_up(&curr->wait_sema);
 	sema_down(&curr->child_sema);
-	// file_allow_write(&curr->running_file);
+
 	process_cleanup();
 }
 
@@ -482,20 +486,19 @@ load(const char *file_name, struct intr_frame *if_)
 		return TID_ERROR;
 
 	strlcpy(fn_copy, file_name, PGSIZE);
-
-	// for (token = strtok_r(fn_copy, " ", &save_ptr); token != NULL;
-	// 	 token = strtok_r(NULL, " ", &save_ptr))
-	// {
-	// 	argv[argc] = token;
-	// 	argc++;
-	// }
-
-	token = strtok_r(fn_copy, " ", &save_ptr);
-	for( argc = 0; token != NULL;){
+	for (token = strtok_r(fn_copy, " ", &save_ptr); token != NULL;
+		 token = strtok_r(NULL, " ", &save_ptr))
+	{
 		argv[argc] = token;
 		argc++;
-		token = strtok_r(NULL, " ", &save_ptr);
 	}
+
+	// token = strtok_r(fn_copy, " ", &save_ptr);
+	// for( argc = 0; token != NULL;){
+	// 	argv[argc] = token;
+	// 	argc++;
+	// 	token = strtok_r(NULL, " ", &save_ptr);
+	// }
 
 
 	file_name = argv[0];
@@ -507,14 +510,14 @@ load(const char *file_name, struct intr_frame *if_)
 		goto done;
 	process_activate(thread_current()); 
 
+
 	/* Open executable file. */
 	file = filesys_open(file_name);
 	if (file == NULL)
-	{
+	{	
 		printf("load: %s: open failed\n", file_name);
 		goto done;
 	}
-
 
 	/* Read and verify executable header. */
 	if (file_read(file, &ehdr, sizeof ehdr) != sizeof ehdr || memcmp(ehdr.e_ident, "\177ELF\2\1\1", 7) || ehdr.e_type != 2 || ehdr.e_machine != 0x3E // amd64
@@ -592,25 +595,73 @@ load(const char *file_name, struct intr_frame *if_)
 	/* Start address. */
 	if_->rip = ehdr.e_entry;
 
+	// /*------------------[Project2 - Argument Passing]------------------*/
+	// for (int j = argc - 1; j >= 0; j--)
+	// {
+	// 	if_->rsp = if_->rsp - (strlen(argv[j]) + 1);
+	// 	pos[j] = if_->rsp;
+	// 	memcpy(if_->rsp, argv[j], strlen(argv[j]) + 1);
+	// }
+	// if_->rsp = if_->rsp & ~0x7;
+	// if_->rsp = if_->rsp - sizeof(char *);
+	// memset(if_->rsp, 0, sizeof(char *));
+	// for (int j = argc - 1; j >= 0; j--)
+	// {
+	// 	if_->rsp = if_->rsp - 8;
+	// 	memcpy(if_->rsp, &pos[j], 8);
+	// }
+	// if_->R.rsi = (uint64_t)if_->rsp;
+	// if_->R.rdi = argc;
+	// if_->rsp = if_->rsp - sizeof(void (*)());
+	// memset(if_->rsp, 0, sizeof(void (*)()));
+
 	/*------------------[Project2 - Argument Passing]------------------*/
-	for (int j = argc - 1; j >= 0; j--)
-	{
-		if_->rsp = if_->rsp - (strlen(argv[j]) + 1);
-		pos[j] = if_->rsp;
-		memcpy(if_->rsp, argv[j], strlen(argv[j]) + 1);
-	}
-	if_->rsp = if_->rsp & ~0x7;
-	if_->rsp = if_->rsp - sizeof(char *);
-	memset(if_->rsp, 0, sizeof(char *));
-	for (int j = argc - 1; j >= 0; j--)
-	{
-		if_->rsp = if_->rsp - 8;
-		memcpy(if_->rsp, &pos[j], 8);
-	}
-	if_->R.rsi = (uint64_t)if_->rsp;
-	if_->R.rdi = argc;
-	if_->rsp = if_->rsp - sizeof(void (*)());
-	memset(if_->rsp, 0, sizeof(void (*)()));
+{
+    /* 1) 복사한 문자열의 주소를 저장할 배열 */
+    void *argv_addr[argc];
+
+    /* 2) 역순으로 문자열 복사 */
+    for (int j = argc - 1; j >= 0; j--) {
+        size_t len = strlen(argv[j]) + 1;
+        if_->rsp -= len;
+        memcpy(if_->rsp, argv[j], len);
+        argv_addr[j] = (void*)if_->rsp;
+    }
+
+    /* 3) 8바이트 정렬 */
+    uintptr_t align = if_->rsp & 0x7;
+    if_->rsp -= align;
+    memset(if_->rsp, 0, align);
+
+    /* 4) argv[argc] = NULL */
+    if_->rsp -= sizeof(char*);
+    *(char**)if_->rsp = NULL;
+
+    /* 5) argv 포인터들 푸시 */
+    for (int j = argc - 1; j >= 0; j--) {
+        if_->rsp -= sizeof(char*);
+        memcpy(if_->rsp, &argv_addr[j], sizeof(char*));
+    }
+
+    /* 6) argv 배열 주소 푸시 */
+    char **argv_on_stack = (char**)if_->rsp;
+    if_->rsp -= sizeof(char**);
+    memcpy(if_->rsp, &argv_on_stack, sizeof(char**));
+
+    /* 7) argc 푸시 */
+    if_->rsp -= sizeof(int);
+    *(int*)if_->rsp = argc;
+
+    /* 8) fake return 주소(NULL) 푸시 */
+    if_->rsp -= sizeof(void*);
+    *(void**)if_->rsp = NULL;
+
+    /* 9) 레지스터에 argc/argv 설정 */
+    if_->R.rdi = argc;
+    if_->R.rsi = (uint64_t)argv_on_stack;
+}	
+
+	
 
 	success = true;
 
@@ -618,6 +669,8 @@ done:
 	/* We arrive here whether the load is successful or not. */
 
 	// file_close(file);
+	if (!success && file != NULL)
+        file_close(file);
 	palloc_free_page(fn_copy);
 	return success;
 }
