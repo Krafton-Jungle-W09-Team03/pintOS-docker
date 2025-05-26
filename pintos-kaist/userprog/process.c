@@ -87,7 +87,7 @@ tid_t process_fork(const char *name, struct intr_frame *if_ UNUSED)
 
 	if (tid == -1)
 	{
-		return TID_ERROR;
+		syscall_exit(TID_ERROR);
 	}
 
 	struct thread *curr = thread_current();
@@ -202,14 +202,19 @@ __do_fork(void *aux)
 	 * TODO:       in include/filesys/file.h. Note that parent should not return
 	 * TODO:       from the fork() until this function successfully duplicates
 	 * TODO:       the resources of parent.*/
-	for (int i = 0; i < 64; i++)
+	for (int i = 0; i < MAX_FD; i++)
 	{
 		if (parent->fd_table[i] != NULL)
 		{
 			struct file *new_file = file_duplicate(parent->fd_table[i]);
 			if (new_file == NULL)
 			{
-				// lock_release(&filesys_lock);
+				for(int j = 0; j < i; j++){
+					if(current->fd_table[i] != NULL){
+						file_close(current->fd_table[j]);
+						current->fd_table[j] = NULL;
+					}
+				}
 				goto error;
 			}
 			current->fd_table[i] = new_file;
@@ -230,8 +235,8 @@ __do_fork(void *aux)
 
 error:
 	sema_up(&current->fork_sema);
-	// syscall_exit(TID_ERROR);
-	thread_exit ();
+	syscall_exit(TID_ERROR);
+	// thread_exit ();
 }
 
 /* Switch the current execution context to the f_name.
@@ -274,6 +279,7 @@ int process_exec(void *f_name)
 	if (!success)
 	{
 		palloc_free_page(fn_copy);
+		// thread_exit();
 		return -1;
 	}
 	palloc_free_page(fn_copy);
@@ -344,14 +350,33 @@ void process_exit(void)
 	 * TODO: Implement process termination message (see
 	 * TODO: project2/process_termination.html).
 	 * TODO: We recommend you to implement process resource cleanup here. */
-	if (curr->running_file){
-		// file_allow_write(&curr->running_file);
+	if (curr->running_file != NULL){
+		// file_allow_write(curr->running_file);
 		file_close(curr->running_file);
+		curr->running_file = NULL;
 	}
 
 	sema_up(&curr->wait_sema);
+	struct list_elem *e, *next;
+	for (e = list_begin(&curr->children); e != list_end(&curr->children); e = next)
+	{
+		next = list_next(e);
+		struct thread *child = list_entry(e, struct thread, ch_elem);
+		if (!child->wait_check)
+		{
+			sema_up(&child->child_sema); // 자식도 언블럭되도록 함
+		}
+	}
 	sema_down(&curr->child_sema);
-
+	for (int i = 0; i < MAX_FD; i++)
+	{
+		if (curr->fd_table[i] != NULL)
+		{
+			file_close(curr->fd_table[i]);
+			curr->fd_table[i] = NULL;
+		}
+	}
+	
 	process_cleanup();
 }
 
@@ -596,70 +621,25 @@ load(const char *file_name, struct intr_frame *if_)
 	if_->rip = ehdr.e_entry;
 
 	// /*------------------[Project2 - Argument Passing]------------------*/
-	// for (int j = argc - 1; j >= 0; j--)
-	// {
-	// 	if_->rsp = if_->rsp - (strlen(argv[j]) + 1);
-	// 	pos[j] = if_->rsp;
-	// 	memcpy(if_->rsp, argv[j], strlen(argv[j]) + 1);
-	// }
-	// if_->rsp = if_->rsp & ~0x7;
-	// if_->rsp = if_->rsp - sizeof(char *);
-	// memset(if_->rsp, 0, sizeof(char *));
-	// for (int j = argc - 1; j >= 0; j--)
-	// {
-	// 	if_->rsp = if_->rsp - 8;
-	// 	memcpy(if_->rsp, &pos[j], 8);
-	// }
-	// if_->R.rsi = (uint64_t)if_->rsp;
-	// if_->R.rdi = argc;
-	// if_->rsp = if_->rsp - sizeof(void (*)());
-	// memset(if_->rsp, 0, sizeof(void (*)()));
+	for (int j = argc - 1; j >= 0; j--)
+	{
+		if_->rsp = if_->rsp - (strlen(argv[j]) + 1);
+		pos[j] = if_->rsp;
+		memcpy(if_->rsp, argv[j], strlen(argv[j]) + 1);
+	}
+	if_->rsp = if_->rsp & ~0x7;
+	if_->rsp = if_->rsp - sizeof(char *);
+	memset(if_->rsp, 0, sizeof(char *));
+	for (int j = argc - 1; j >= 0; j--)
+	{
+		if_->rsp = if_->rsp - 8;
+		memcpy(if_->rsp, &pos[j], 8);
+	}
+	if_->R.rsi = (uint64_t)if_->rsp;
+	if_->R.rdi = argc;
+	if_->rsp = if_->rsp - sizeof(void (*)());
+	memset(if_->rsp, 0, sizeof(void (*)()));
 
-	/*------------------[Project2 - Argument Passing]------------------*/
-{
-    /* 1) 복사한 문자열의 주소를 저장할 배열 */
-    void *argv_addr[argc];
-
-    /* 2) 역순으로 문자열 복사 */
-    for (int j = argc - 1; j >= 0; j--) {
-        size_t len = strlen(argv[j]) + 1;
-        if_->rsp -= len;
-        memcpy(if_->rsp, argv[j], len);
-        argv_addr[j] = (void*)if_->rsp;
-    }
-
-    /* 3) 8바이트 정렬 */
-    uintptr_t align = if_->rsp & 0x7;
-    if_->rsp -= align;
-    memset(if_->rsp, 0, align);
-
-    /* 4) argv[argc] = NULL */
-    if_->rsp -= sizeof(char*);
-    *(char**)if_->rsp = NULL;
-
-    /* 5) argv 포인터들 푸시 */
-    for (int j = argc - 1; j >= 0; j--) {
-        if_->rsp -= sizeof(char*);
-        memcpy(if_->rsp, &argv_addr[j], sizeof(char*));
-    }
-
-    /* 6) argv 배열 주소 푸시 */
-    char **argv_on_stack = (char**)if_->rsp;
-    if_->rsp -= sizeof(char**);
-    memcpy(if_->rsp, &argv_on_stack, sizeof(char**));
-
-    /* 7) argc 푸시 */
-    if_->rsp -= sizeof(int);
-    *(int*)if_->rsp = argc;
-
-    /* 8) fake return 주소(NULL) 푸시 */
-    if_->rsp -= sizeof(void*);
-    *(void**)if_->rsp = NULL;
-
-    /* 9) 레지스터에 argc/argv 설정 */
-    if_->R.rdi = argc;
-    if_->R.rsi = (uint64_t)argv_on_stack;
-}	
 
 	
 

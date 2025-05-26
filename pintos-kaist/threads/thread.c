@@ -215,13 +215,13 @@ thread_create (const char *name, int priority,
 	t->tf.cs = SEL_KCSEG;
 	t->tf.eflags = FLAG_IF;
 
-	
-	for(int i = 0; i < 64; i++)
+	for (int i = 0; i < MAX_FD; i++)
 	{
 		t->fd_table[i] == NULL;
 	}
 	t->fd = -1;
 	t->running_file = NULL;
+	t->wait_check = 0;
 
 
 	t->parent = curr;

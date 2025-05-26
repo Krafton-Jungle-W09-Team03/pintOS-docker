@@ -105,20 +105,21 @@ int syscall_write(int fd, const void *buffer, unsigned size)
 		
 	if (fd == 1)
 	{
+		lock_acquire(&filesys_lock);
 		putbuf(buffer, size);
-		
+		lock_release(&filesys_lock);
 		return size;
 	}
 	else if (fd == 0)
 	{
 		return -1;
 	}
-	else if (fd > 1 && fd < 64)
+	else if (fd > 1 && fd < MAX_FD)
 	{
 		struct file *write_file = fd_tofile(fd);
 		if (write_file == NULL)
 		{
-			return -1;
+			syscall_exit(-1);
 		}
 		else
 		{
@@ -128,12 +129,12 @@ int syscall_write(int fd, const void *buffer, unsigned size)
 			return wri;
 		}
 	}
-	return -1;
+	syscall_exit(-1);
 }
 
 int syscall_exec(const char* cmd_line){
 	check_addr(cmd_line);
-	if(process_exec(cmd_line)<0){
+	if(process_exec(cmd_line) < 0){
 		syscall_exit(-1);
 	}
 	return thread_current()->tid;
@@ -157,7 +158,7 @@ int syscall_open(const char *file)
 
 	int open_fd;
 	bool is_not_full = false;
-	for (open_fd = 2; open_fd < 64; open_fd++)
+	for (open_fd = 2; open_fd < MAX_FD; open_fd++)
 	{
 		if (curr->fd_table[open_fd] == NULL)
 		{
@@ -188,7 +189,7 @@ int syscall_filesize(int fd)
 
 	if (size_file == NULL)
 	{
-		return -1;
+		syscall_exit(-1);
 	}
 
 	return file_length(size_file);
@@ -219,7 +220,7 @@ int syscall_read(int fd, void *buffer, unsigned size)
 	{
 		syscall_exit(-1);
 	}
-	else if (fd > 1 && fd < 64)
+	else if (fd > 1 && fd < MAX_FD)
 	{
 
 		struct file *read_file = fd_tofile(fd);
@@ -235,7 +236,7 @@ int syscall_read(int fd, void *buffer, unsigned size)
 			return rea;
 		}
 	}
-	return -1;
+	syscall_exit(-1);
 }
 
 void syscall_seek(int fd, unsigned position)
@@ -264,7 +265,7 @@ unsigned syscall_tell(int fd)
 		return 0;
 	}
 
-	if (fd < 0 || 64 <= fd)
+	if (fd < 0 || MAX_FD <= fd)
 	{
 		return 0;
 	}
@@ -300,7 +301,7 @@ void syscall_close(int fd)
 		syscall_exit(-1);
 	}
 
-	if (fd < 0 || 64 <= fd)
+	if (fd < 0 || MAX_FD <= fd)
 	{
 		return;
 	}
@@ -401,7 +402,7 @@ void check_addr(const void *addr)
 
 struct file *fd_tofile(int fd)
 {
-	if (fd < 0 || 64 <= fd)
+	if (fd < 0 || MAX_FD <= fd)
 	{
 		return NULL;
 	}
