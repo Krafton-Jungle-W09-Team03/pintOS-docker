@@ -100,6 +100,8 @@ struct thread {
 	struct list_elem d_elem;			/* donation List element. */
 	struct lock *wait_on_lock; 			/* lock that it waits for. */
 	int origin_priority;
+
+	/*------------------[Project2 - System Call]------------------*/
 	struct thread *parent;
 
 	struct file *fd_table[64];
@@ -114,6 +116,7 @@ struct thread {
 
 	int wait_check;
 	int exit_status;
+	/*------------------[Project2 - System Call]------------------*/
 
 #ifdef USERPROG
 	/* Owned by userprog/process.c. */

@@ -46,19 +46,21 @@ tid_t process_create_initd(const char *file_name)
 	char *fn_copy;
 	char *token, *save_ptr;
 	tid_t tid;
-	// file_name : args-single onearg
 	/* Make a copy of FILE_NAME.
 	 * Otherwise there's a race between the caller and load(). */
-	fn_copy = palloc_get_page(0);
+	fn_copy = palloc_get_page(PAL_ZERO);
 	if (fn_copy == NULL)
 		return TID_ERROR;
 	strlcpy(fn_copy, file_name, PGSIZE);
 
 	token = strtok_r(file_name, " ", &save_ptr);
+
 	/* Create a new thread to execute FILE_NAME. */
 	tid = thread_create(token, PRI_DEFAULT, initd, fn_copy);
 	if (tid == TID_ERROR)
+	{
 		palloc_free_page(fn_copy);
+	}
 	return tid;
 }
 
@@ -79,13 +81,18 @@ initd(void *f_name)
 
 /* Clones the current process as `name`. Returns the new process's thread id, or
  * TID_ERROR if the thread cannot be created. */
+
+/** 자식 프로세스 생성 후 tid 반환
+ * 
+*/
 tid_t process_fork(const char *name, struct intr_frame *if_ UNUSED)
 {
+	/*------------------[Project2 - System Call]------------------*/
 	tid_t tid = thread_create(name, PRI_DEFAULT, __do_fork, if_);
 
 	if (tid == -1)
 	{
-		return TID_ERROR;
+		syscall_exit(TID_ERROR);
 	}
 
 	struct thread *curr = thread_current();
@@ -105,18 +112,17 @@ tid_t process_fork(const char *name, struct intr_frame *if_ UNUSED)
 		curr_elem = curr_elem->next;
 	}
 
-	if (check_tid == -1)
-	{
+	if (check_tid == -1){
 		return TID_ERROR;
 	}
 
 	sema_down(&child->fork_sema);
-	if (child->exit_status == TID_ERROR)
-	{
+	if (child->exit_status == TID_ERROR){
 		return TID_ERROR;
 	}
 
 	return tid;
+	/*------------------[Project2 - System Call]------------------*/
 }
 
 #ifndef VM
@@ -166,6 +172,11 @@ duplicate_pte(uint64_t *pte, void *va, void *aux)
  * Hint) parent->tf does not hold the userland context of the process.
  *       That is, you are required to pass second argument of process_fork to
  *       this function. */
+
+/** 부모 프로세스의 인터럽트 프레임, page, fdt를 자식 프로세스에 복제
+ * aux - 부모 프로세스에서 전달받은 매개변수
+ * 
+*/
 static void
 __do_fork(void *aux)
 {
@@ -178,7 +189,6 @@ __do_fork(void *aux)
 	/* 1. Read the cpu context to local stack. */
 	memcpy(&if_, parent_if, sizeof(struct intr_frame));
 
-	// if_.R.rax = 0; // 추가
 
 	/* 2. Duplicate PT */
 	current->pml4 = pml4_create();
@@ -200,24 +210,24 @@ __do_fork(void *aux)
 	 * TODO:       in include/filesys/file.h. Note that parent should not return
 	 * TODO:       from the fork() until this function successfully duplicates
 	 * TODO:       the resources of parent.*/
+	/*------------------[Project2 - System Call]------------------*/
 	for (int i = 0; i < 64; i++)
 	{
 		if (parent->fd_table[i] != NULL)
 		{
+			lock_acquire(&filesys_lock);
 			struct file *new_file = file_duplicate(parent->fd_table[i]);
+			lock_release(&filesys_lock);
 			if (new_file == NULL)
 			{
-				// lock_release(&filesys_lock);
 				goto error;
 			}
 			current->fd_table[i] = new_file;
 		}
 	}
-	// lock_release(&fork_lock);
 	current->fd = parent->fd;
 
 	sema_up(&current->fork_sema);
-	// process_init ();
 
 	/* Finally, switch to the newly created process. */
 	if (succ)
@@ -227,27 +237,42 @@ __do_fork(void *aux)
 	}
 
 error:
+	for (int j = 0; j < 64; j++)
+	{
+		if (current->fd_table[j] != NULL)
+		{
+			lock_acquire(&filesys_lock);
+			file_close(current->fd_table[j]);
+			lock_release(&filesys_lock);
+			current->fd_table[j] = NULL;
+		}
+	}
 	sema_up(&current->fork_sema);
-	// syscall_exit(TID_ERROR);
-	thread_exit ();
+	syscall_exit(TID_ERROR);
+	// thread_exit();
+	/*------------------[Project2 - System Call]------------------*/
 }
 
 /* Switch the current execution context to the f_name.
  * Returns -1 on fail. */
 
-// f_name : args-single onearg
+/** 현재 실행 중인 사용자 프로세스를 지우고, 새로운 프로그램을 메모리에 로드함
+
+스택을 다시 설정하고, 인자(argument)를 복사함
+
+사용자 모드에서 새 프로그램이 처음부터 실행되며, 기존 실행은 돌아오지 않음
+*/
 int process_exec(void *f_name)
 {
 	char *file_name = f_name;
 	char *fn_copy;
-	// char *token, *save_ptr;
 	bool success;
+	/*------------------[Project2 - System Call]------------------*/
 	fn_copy = palloc_get_page(PAL_ZERO);
 	if (fn_copy == NULL)
 		return TID_ERROR;
-
 	strlcpy(fn_copy, file_name, PGSIZE);
-
+	/*------------------[Project2 - System Call]------------------*/
 	/* We cannot use the intr_frame in the thread structure.
 	 * This is because when current thread rescheduled,
 	 * it stores the execution information to the member. */
@@ -260,15 +285,9 @@ int process_exec(void *f_name)
 	process_cleanup();
 
 	/* And then load the binary */
-	// success = load(file_name, &_if);
 	success = load(fn_copy, &_if);
 
 	/* If load failed, quit. */
-	// if (!success){
-	// 	palloc_free_page(file_name);
-	// 	return -1;
-	// }
-
 	/* Start switched process. */
 	if (!success)
 	{
@@ -289,15 +308,18 @@ int process_exec(void *f_name)
  *
  * This function will be implemented in problem 2-2.  For now, it
  * does nothing. */
+
+/** 자식 프로세스가 종료될 때까지 기다리고 자식 프로세스의 exit_status 반환
+ * 
+*/
 int process_wait(tid_t child_tid UNUSED)
 {
 	/* XXX: Hint) The pintos exit if process_wait (initd), we recommend you
 	 * XXX:       to add infinite loop here before
 	 * XXX:       implementing the process_wait. */
-
+	/*------------------[Project2 - System Call]------------------*/
 	struct thread *curr = thread_current();
 	struct thread *child = NULL;
-	// struct thread *head = list_entry(list_begin(&curr->children), struct thread, ch_elem);
 	struct list_elem *curr_elem = list_begin(&curr->children);
 	int check_tid = -1;
 
@@ -336,20 +358,58 @@ int process_wait(tid_t child_tid UNUSED)
 }
 
 /* Exit the process. This function is called by thread_exit (). */
+// 	/* TODO: Your code goes here.
+// 	 * TODO: Implement process termination message (see
+// 	 * TODO: project2/process_termination.html).
+// 	 * TODO: We recommend you to implement process resource cleanup here. */
+
+/** 프로세스 종료 및 자원 정리
+ * 종료 상태를 부모에게 전달
+ * 현재 프로세스의 children 정리
+ * 
+*/
 void process_exit(void)
 {
-	struct thread *curr = thread_current();
 	/* TODO: Your code goes here.
 	 * TODO: Implement process termination message (see
 	 * TODO: project2/process_termination.html).
 	 * TODO: We recommend you to implement process resource cleanup here. */
-	file_close(curr->running_file);
+	/*------------------[Project2 - System Call]------------------*/
+	struct thread *curr = thread_current();
+	struct list_elem *e, *next;
+	
+	if (curr->running_file != NULL){
+		file_close(curr->running_file);
+		curr->running_file = NULL;
+	}
 
 	sema_up(&curr->wait_sema);
+	for (e = list_begin(&curr->children); e != list_end(&curr->children); e = next)
+	{
+		next = list_next(e);
+		struct thread *child = list_entry(e, struct thread, ch_elem);
+		if (!child->wait_check)
+		{
+			sema_up(&child->child_sema); // 자식도 언블럭되도록 함
+		}
+		e = next;
+	}
+	
 	sema_down(&curr->child_sema);
-	// file_allow_write(&curr->running_file);
+	for (int i = 0; i < 64; i++)
+	{
+		if (curr->fd_table[i] != NULL)
+		{
+			lock_acquire(&filesys_lock);
+			file_close(curr->fd_table[i]);
+			lock_release(&filesys_lock);
+			curr->fd_table[i] = NULL;
+		}
+	}
+	/*------------------[Project2 - System Call]------------------*/
 	process_cleanup();
 }
+
 
 /* Free the current process's resources. */
 static void
@@ -456,13 +516,13 @@ static bool load_segment(struct file *file, off_t ofs, uint8_t *upage,
  * Stores the executable's entry point into *RIP
  * and its initial stack pointer into *RSP.
  * Returns true if successful, false otherwise. */
+
 /* FILE_NAME에서 ELF 실행 파일을 현재 스레드로 로드합니다.
  * 실행 파일의 진입 지점(entry point)은 *RIP에 저장하고,
  * 초기 스택 포인터(stack pointer)는 *RSP에 저장합니다.
  * 로드에 성공하면 true를 반환하고,
  * 실패하면 false를 반환합니다.
  */
-
 static bool
 load(const char *file_name, struct intr_frame *if_)
 {
@@ -482,24 +542,16 @@ load(const char *file_name, struct intr_frame *if_)
 		return TID_ERROR;
 
 	strlcpy(fn_copy, file_name, PGSIZE);
-
-	// for (token = strtok_r(fn_copy, " ", &save_ptr); token != NULL;
-	// 	 token = strtok_r(NULL, " ", &save_ptr))
-	// {
-	// 	argv[argc] = token;
-	// 	argc++;
-	// }
-
-	token = strtok_r(fn_copy, " ", &save_ptr);
-	for( argc = 0; token != NULL;){
+	for (token = strtok_r(fn_copy, " ", &save_ptr); token != NULL;
+		 token = strtok_r(NULL, " ", &save_ptr))
+	{
 		argv[argc] = token;
 		argc++;
-		token = strtok_r(NULL, " ", &save_ptr);
 	}
-
 
 	file_name = argv[0];
 	char *pos[argc];
+	/*------------------[Project2 - Argument Passing]------------------*/
 
 	/* Allocate and activate page directory. */
 	t->pml4 = pml4_create();
@@ -507,14 +559,16 @@ load(const char *file_name, struct intr_frame *if_)
 		goto done;
 	process_activate(thread_current()); 
 
+
 	/* Open executable file. */
+	lock_acquire(&filesys_lock);
 	file = filesys_open(file_name);
+	lock_release(&filesys_lock);
 	if (file == NULL)
-	{
+	{	
 		printf("load: %s: open failed\n", file_name);
 		goto done;
 	}
-
 
 	/* Read and verify executable header. */
 	if (file_read(file, &ehdr, sizeof ehdr) != sizeof ehdr || memcmp(ehdr.e_ident, "\177ELF\2\1\1", 7) || ehdr.e_type != 2 || ehdr.e_machine != 0x3E // amd64
@@ -612,12 +666,16 @@ load(const char *file_name, struct intr_frame *if_)
 	if_->rsp = if_->rsp - sizeof(void (*)());
 	memset(if_->rsp, 0, sizeof(void (*)()));
 
+	/*------------------[Project2 - Argument Passing]------------------*/
+
 	success = true;
 
 done:
 	/* We arrive here whether the load is successful or not. */
 
-	// file_close(file);
+	if (!success && file != NULL){
+		file_close(file);
+	}
 	palloc_free_page(fn_copy);
 	return success;
 }

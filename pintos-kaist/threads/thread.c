@@ -215,18 +215,18 @@ thread_create (const char *name, int priority,
 	t->tf.cs = SEL_KCSEG;
 	t->tf.eflags = FLAG_IF;
 
-	
+	/*------------------[Project2 - System Call]------------------*/
 	for(int i = 0; i < 64; i++)
 	{
 		t->fd_table[i] == NULL;
 	}
 	t->fd = -1;
 	t->running_file = NULL;
-
-
 	t->parent = curr;
 	//부모 children list 에 insert 한다.
 	list_push_back(&curr->children, &t->ch_elem);
+	/*------------------[Project2 - System Call]------------------*/
+
 	/* Add to run queue. */
 	//ready_list 에 넣어준다.
 	thread_unblock (t);
@@ -543,12 +543,13 @@ init_thread (struct thread *t, const char *name, int priority) {
 	/*------------------[Project1 - Thread]------------------*/
 	t->getuptick = 0;
 	list_init(&t->donations);
-	list_init(&t->children);
 	t->wait_on_lock = NULL;
+	/*------------------[Project2 - System Call]------------------*/
 	sema_init(&t->wait_sema,0);
 	sema_init(&t->child_sema,0);
+	list_init(&t->children);
 	sema_init(&t->fork_sema, 0);
-
+	/*------------------[Project2 - System Call]------------------*/
 }
 
 /* Chooses and returns the next thread to be scheduled.  Should
